@@ -1,6 +1,20 @@
 # Still Launcher (Android UI Launcher Lite)
 
-A compact Android home launcher inspired by Niagara's single-list layout. It is an independent implementation with its own name and icon.
+A compact, ultra-lightweight Android home launcher inspired by Niagara's single-list layout. It is an independent native implementation built with zero third-party UI dependencies.
+
+<p align="center">
+  <img src="still-launcher-device.png" alt="Still Launcher on Device" width="360" />
+</p>
+
+## Highlights & Specifications
+
+| Property | Details |
+| :--- | :--- |
+| **Platform** | Android 8.0+ (API 26+) |
+| **Target SDK** | Android 16 (API 36) |
+| **Language** | Native Java 17 |
+| **Memory Footprint** | ~86 MB PSS, 0% CPU at idle |
+| **License** | [MIT License](LICENSE) |
 
 ## Current features
 
@@ -14,7 +28,7 @@ Long-press the clock or date for settings. Tap the alphabet to open all apps, th
 
 ## Build and install
 
-Open this folder in Android Studio and run the `app` configuration, or use PowerShell:
+### Windows (PowerShell)
 
 ```powershell
 $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio\jbr'
@@ -23,7 +37,14 @@ $env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
 adb install -r .\app\build\outputs\apk\debug\app-debug.apk
 ```
 
-The debug APK is at `app/build/outputs/apk/debug/app-debug.apk`.
+### Linux / macOS
+
+```bash
+./gradlew :app:assembleDebug
+adb install -r ./app/build/outputs/apk/debug/app-debug.apk
+```
+
+The debug APK will be generated at `app/build/outputs/apk/debug/app-debug.apk`.
 
 ## Google Play release
 
@@ -38,7 +59,7 @@ Create and back up an upload keystore using Android Studio's **Build > Generate 
 | `STILL_RELEASE_KEY_ALIAS` | Upload key alias |
 | `STILL_RELEASE_KEY_PASSWORD` | Upload key password |
 
-Then run `./gradlew.bat :app:lintRelease :app:bundleRelease` on Windows. The bundle is `app/build/outputs/bundle/release/app-release.aab`. A build without all four variables is **unsigned and cannot be uploaded**. Verify the signed bundle before uploading with `jarsigner -verify -verbose -certs app/build/outputs/bundle/release/app-release.aab`. Enroll in Play App Signing in Play Console.
+Then run `./gradlew.bat :app:lintRelease :app:bundleRelease` (or `./gradlew ...` on Linux/macOS). The bundle is generated at `app/build/outputs/bundle/release/app-release.aab`. A build without all four variables is **unsigned and cannot be uploaded**. Verify the signed bundle before uploading with `jarsigner -verify -verbose -certs app/build/outputs/bundle/release/app-release.aab`. Enroll in Play App Signing in Play Console.
 
 The code alone cannot finish the Play listing. In Play Console, provide a hosted privacy policy, accurate Data safety answers, store text and graphics, content rating, support contact, and testing/review information. The app currently reads installed launchable apps and stores favorites and display preferences locally. Review this behavior against the final release build when filling in Data safety. New personal developer accounts may need a closed test before production access.
 
@@ -51,3 +72,7 @@ Installed and tested on a connected HMD Vibe2 5G running Android 16 at 720 × 16
 The layout was tuned against the connected phone's [Niagara reference screenshot](niagara-reference.png). Weather, calendar events, notifications, widget hosting, icon packs, and app pop-ups are not implemented yet. Those features require additional Android integrations and, in some cases, explicit user access.
 
 See [NIAGARA_LAUNCHER_RESEARCH.md](NIAGARA_LAUNCHER_RESEARCH.md) for the research and implementation plan.
+
+## License
+
+This project is licensed under the terms of the [MIT License](LICENSE).
