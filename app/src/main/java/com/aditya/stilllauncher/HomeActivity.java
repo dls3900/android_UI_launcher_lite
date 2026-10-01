@@ -16,6 +16,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
+import android.provider.AlarmClock;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.text.format.DateFormat;
@@ -123,8 +124,9 @@ public final class HomeActivity extends ComponentActivity {
         date.setTextSize(15);
         date.setPadding(0, 0, 0, 0);
         homeContent.addView(date);
-        clock.setOnClickListener(v -> openSystemApp("com.google.android.deskclock", "android.intent.action.SHOW_ALARMS"));
-        date.setOnClickListener(v -> openSystemApp("com.google.android.calendar", Intent.ACTION_MAIN));
+        clock.setOnClickListener(v -> openSystemApp(new Intent(AlarmClock.ACTION_SHOW_ALARMS), "Clock"));
+        date.setOnClickListener(v -> openSystemApp(new Intent(Intent.ACTION_MAIN)
+                .addCategory(Intent.CATEGORY_APP_CALENDAR), "Calendar"));
         clock.setOnLongClickListener(v -> { showSettings(); return true; });
         date.setOnLongClickListener(v -> { showSettings(); return true; });
 
@@ -395,13 +397,20 @@ public final class HomeActivity extends ComponentActivity {
         catch (RuntimeException e) { Toast.makeText(this, "Select Still Launcher in Default apps", Toast.LENGTH_LONG).show(); }
     }
 
-    private void openSystemApp(String packageName, String action) {
+    private void openSystemApp(Intent intent, String appName) {
         try {
-            Intent intent = new Intent(action);
-            intent.setPackage(packageName);
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             startActivity(intent);
-        } catch (RuntimeException ignored) { showSettings(); }
+        } catch (RuntimeException ignored) {
+            AppEntry fallback = null;
+            for (AppEntry app : apps) {
+                if (app.label.equalsIgnoreCase(appName)) { fallback = app; break; }
+                if (fallback == null && app.component.getPackageName().toLowerCase(Locale.ROOT)
+                        .contains(appName.toLowerCase(Locale.ROOT))) fallback = app;
+            }
+            if (fallback != null) {
+                launch(fallback);
+            } else Toast.makeText(this, "No app available for this shortcut", Toast.LENGTH_SHORT).show();
+        }
     }
 
     private void updateClock() {
@@ -410,7 +419,6 @@ public final class HomeActivity extends ComponentActivity {
         boolean is24 = DateFormat.is24HourFormat(this);
         clock.setText(new SimpleDateFormat(is24 ? "HH:mm" : "h:mm", Locale.getDefault()).format(now));
         String day = new SimpleDateFormat("EEE, d MMM", Locale.getDefault()).format(now);
-        if (Locale.getDefault().getLanguage().equals("en")) day = day.replace(" Sep", " Sept");
         date.setText(day);
     }
 
