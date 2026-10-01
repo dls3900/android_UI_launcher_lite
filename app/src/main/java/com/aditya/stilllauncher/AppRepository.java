@@ -45,7 +45,9 @@ final class AppRepository {
                         result.add(new AppEntry(info));
                     }
                 }
-                Collections.sort(result, Comparator.comparing((AppEntry a) -> a.label, String.CASE_INSENSITIVE_ORDER)
+                // Section first, so every "#" app sits in one group the rail can jump to.
+                Collections.sort(result, Comparator.comparing((AppEntry a) -> a.section)
+                        .thenComparing(a -> a.label, String.CASE_INSENSITIVE_ORDER)
                         .thenComparing(a -> a.key));
             } catch (RuntimeException ignored) {
                 // Keep the last good list if a profile disappears during a scan.
