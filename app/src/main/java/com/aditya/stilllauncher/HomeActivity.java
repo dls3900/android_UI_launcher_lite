@@ -1,6 +1,5 @@
 package com.aditya.stilllauncher;
 
-import android.app.AlertDialog;
 import androidx.activity.ComponentActivity;
 import androidx.activity.OnBackPressedCallback;
 import android.app.role.RoleManager;
@@ -70,7 +69,10 @@ public final class HomeActivity extends ComponentActivity {
     private boolean jumpScheduled;
     private final Choreographer.FrameCallback jumpFrame = frameTimeNanos -> {
         jumpScheduled = false;
-        if (showingApps) appList.setSelection(adapter.indexFor(pendingLetter));
+        if (!showingApps) return;
+        // Stop any fling first, otherwise it keeps scrolling past the letter we jump to.
+        appList.smoothScrollBy(0, 0);
+        appList.setSelection(adapter.indexFor(pendingLetter));
     };
     private final BroadcastReceiver clockReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) { updateClock(); }
@@ -174,6 +176,10 @@ public final class HomeActivity extends ComponentActivity {
             if (letter == '☆') { hideAllApps(); return; }
             if (letter == '○') { showAllApps(true); return; }
             if (!showingApps) showAllApps(false);
+            else if (search.hasFocus()) {
+                search.clearFocus();
+                hideKeyboard();
+            }
             if (search.length() > 0) search.setText("");
             pendingLetter = letter;
             if (!jumpScheduled) {
@@ -181,7 +187,7 @@ public final class HomeActivity extends ComponentActivity {
                 Choreographer.getInstance().postFrameCallback(jumpFrame);
             }
         });
-        root.addView(rail, new FrameLayout.LayoutParams(dp(34), ViewGroup.LayoutParams.MATCH_PARENT));
+        root.addView(rail, new FrameLayout.LayoutParams(rail.railWidth(), ViewGroup.LayoutParams.MATCH_PARENT));
         updateClock();
         root.addOnLayoutChangeListener((v, l, t, r, b, oldL, oldT, oldR, oldB) -> {
             if (b - t != oldB - oldT) updatePositions();
@@ -204,12 +210,14 @@ public final class HomeActivity extends ComponentActivity {
         panelLp.rightMargin = dp(prefs.getBoolean(LEFT, false) ? 22 : 46);
         appPanel.setLayoutParams(panelLp);
         FrameLayout.LayoutParams railLp = (FrameLayout.LayoutParams) rail.getLayoutParams();
-        railLp.gravity = prefs.getBoolean(LEFT, false) ? Gravity.START | Gravity.TOP : Gravity.END | Gravity.TOP;
-        railLp.leftMargin = prefs.getBoolean(LEFT, false) ? dp(12) : 0;
-        railLp.rightMargin = prefs.getBoolean(LEFT, false) ? 0 : dp(12);
-        railLp.topMargin = Math.max(topInset + dp(40), (int) (height * .39f));
-        railLp.height = Math.min((int) (height * .55f), dp(18) * rail.count());
+        // The rail reaches the screen edge and pads itself, so the letters stay where they were.
+        railLp.gravity = prefs.getBoolean(LEFT, false) ? Gravity.LEFT | Gravity.TOP : Gravity.RIGHT | Gravity.TOP;
+        railLp.leftMargin = 0;
+        railLp.rightMargin = 0;
+        railLp.topMargin = Math.max(topInset + dp(40), (int) (height * .39f)) - rail.railPad();
+        railLp.height = Math.min((int) (height * .55f), dp(18) * rail.count()) + 2 * rail.railPad();
         railLp.bottomMargin = 0;
+        rail.setLeftSide(prefs.getBoolean(LEFT, false));
         rail.setLayoutParams(railLp);
     }
 
@@ -328,57 +336,71 @@ public final class HomeActivity extends ComponentActivity {
 
     private void showAppMenu(AppEntry entry) {
         boolean favorite = favoriteKeys.contains(entry.key);
-        String[] choices = {favorite ? "Remove from favorites" : "Add to favorites", "Move favorite up", "Move favorite down", "App info"};
-        new AlertDialog.Builder(this).setTitle(entry.label).setItems(choices, (dialog, which) -> {
-            if (which == 0) {
-                if (favorite) favoriteKeys.remove(entry.key);
-                else favoriteKeys.add(entry.key);
-                saveFavorites();
-                renderFavorites();
-            } else if (which == 1 || which == 2) {
-                if (!favorite) return;
-                List<String> order = new ArrayList<>(favoriteKeys);
-                int at = order.indexOf(entry.key);
-                int next = at + (which == 1 ? -1 : 1);
-                if (next < 0 || next >= order.size()) return;
-                java.util.Collections.swap(order, at, next);
-                favoriteKeys.clear();
-                favoriteKeys.addAll(order);
-                saveFavorites();
-                renderFavorites();
-            } else {
-                Intent info = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                        Uri.parse("package:" + entry.component.getPackageName()));
-                startActivity(info);
-            }
-        }).show();
+        MenuSheet sheet = new MenuSheet(this, entry.label, favorite ? "In favorites" : null);
+        int density = getResources().getDisplayMetrics().densityDpi;
+        Bitmap icon = iconCache.getCached(entry, density);
+        if (icon != null) sheet.setIcon(icon);
+        else iconCache.request(entry, density, () -> sheet.setIcon(iconCache.getCached(entry, density)));
+        sheet.item(favorite ? R.drawable.ic_sheet_star : R.drawable.ic_sheet_star_outline,
+                favorite ? "Remove from favorites" : "Add to favorites", () -> {
+                    if (favorite) favoriteKeys.remove(entry.key);
+                    else favoriteKeys.add(entry.key);
+                    saveFavorites();
+                    renderFavorites();
+                });
+        // Reordering only applies to apps that are already favorites.
+        if (favorite) {
+            sheet.item(R.drawable.ic_sheet_up, "Move favorite up", () -> moveFavorite(entry, -1));
+            sheet.item(R.drawable.ic_sheet_down, "Move favorite down", () -> moveFavorite(entry, 1));
+        }
+        sheet.item(R.drawable.ic_sheet_info, "App info", () -> startActivity(
+                new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.parse("package:" + entry.component.getPackageName()))));
+        sheet.show();
+    }
+
+    private void moveFavorite(AppEntry entry, int step) {
+        List<String> order = new ArrayList<>(favoriteKeys);
+        int at = order.indexOf(entry.key);
+        int next = at + step;
+        if (at < 0 || next < 0 || next >= order.size()) return;
+        java.util.Collections.swap(order, at, next);
+        favoriteKeys.clear();
+        favoriteKeys.addAll(order);
+        saveFavorites();
+        renderFavorites();
     }
 
     private void saveFavorites() { prefs.edit().putString(FAVORITES, String.join("|", favoriteKeys)).apply(); }
 
     private void showSettings() {
-        String[] choices = {"Move content up", "Move content down", "Switch alphabet side",
-                prefs.getBoolean(DIM, true) ? "Remove wallpaper dim" : "Dim wallpaper", "Choose default Home app", "Reset favorites"};
-        new AlertDialog.Builder(this).setTitle("Still Launcher").setItems(choices, (dialog, which) -> {
-            switch (which) {
-                case 0: prefs.edit().putInt(OFFSET, Math.max(-120, prefs.getInt(OFFSET, 0) - 20)).apply(); updatePositions(); break;
-                case 1: prefs.edit().putInt(OFFSET, Math.min(120, prefs.getInt(OFFSET, 0) + 20)).apply(); updatePositions(); break;
-                case 2: prefs.edit().putBoolean(LEFT, !prefs.getBoolean(LEFT, false)).apply(); updatePositions(); break;
-                case 3:
-                    boolean dim = !prefs.getBoolean(DIM, true);
-                    prefs.edit().putBoolean(DIM, dim).apply();
-                    root.setBackgroundColor(dim ? 0x44000000 : Color.TRANSPARENT);
-                    break;
-                case 4: openHomeSettings(); break;
-                case 5:
+        boolean left = prefs.getBoolean(LEFT, false);
+        boolean dimmed = prefs.getBoolean(DIM, true);
+        new MenuSheet(this, "Still Launcher", "Home screen settings")
+                .item(R.drawable.ic_sheet_up, "Move content up", () -> {
+                    prefs.edit().putInt(OFFSET, Math.max(-120, prefs.getInt(OFFSET, 0) - 20)).apply();
+                    updatePositions();
+                })
+                .item(R.drawable.ic_sheet_down, "Move content down", () -> {
+                    prefs.edit().putInt(OFFSET, Math.min(120, prefs.getInt(OFFSET, 0) + 20)).apply();
+                    updatePositions();
+                })
+                .item(R.drawable.ic_sheet_swap, "Switch alphabet side", left ? "Left" : "Right", false, () -> {
+                    prefs.edit().putBoolean(LEFT, !left).apply();
+                    updatePositions();
+                })
+                .item(R.drawable.ic_sheet_dim, dimmed ? "Remove wallpaper dim" : "Dim wallpaper", dimmed ? "On" : "Off", false, () -> {
+                    prefs.edit().putBoolean(DIM, !dimmed).apply();
+                    root.setBackgroundColor(!dimmed ? 0x44000000 : Color.TRANSPARENT);
+                })
+                .item(R.drawable.ic_sheet_home, "Choose default Home app", this::openHomeSettings)
+                .item(R.drawable.ic_sheet_reset, "Reset favorites", null, true, () -> {
                     favoriteKeys.clear();
                     prefs.edit().remove(FAVORITES).apply();
                     chooseInitialFavorites();
                     renderFavorites();
-                    break;
-                default: break;
-            }
-        }).show();
+                })
+                .show();
     }
 
     private void offerHomeRole() {
