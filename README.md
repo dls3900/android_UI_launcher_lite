@@ -61,7 +61,7 @@ Create and back up an upload keystore using Android Studio's **Build > Generate 
 
 Then run `./gradlew.bat :app:lintRelease :app:bundleRelease` (or `./gradlew ...` on Linux/macOS). The bundle is generated at `app/build/outputs/bundle/release/app-release.aab`. A build without all four variables is **unsigned and cannot be uploaded**. Verify the signed bundle before uploading with `jarsigner -verify -verbose -certs app/build/outputs/bundle/release/app-release.aab`. Enroll in Play App Signing in Play Console.
 
-The code alone cannot finish the Play listing. In Play Console, provide a hosted privacy policy, accurate Data safety answers, store text and graphics, content rating, support contact, and testing/review information. The app currently reads installed launchable apps and stores favorites and display preferences locally. Review this behavior against the final release build when filling in Data safety. New personal developer accounts may need a closed test before production access.
+The code alone cannot finish the Play listing. In Play Console, provide a hosted privacy policy (a draft is in [PRIVACY.md](PRIVACY.md)), accurate Data safety answers, store text and graphics, content rating, support contact, and testing/review information. The app currently reads installed launchable apps and stores favorites, the last few apps opened from the launcher, and display preferences locally. Review this behavior against the final release build when filling in Data safety. New personal developer accounts may need a closed test before production access.
 
 ## Device check (25 September 2026)
 

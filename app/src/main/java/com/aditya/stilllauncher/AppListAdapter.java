@@ -19,6 +19,7 @@ final class AppListAdapter extends BaseAdapter {
     private final IconCache icons;
     private final List<AppEntry> entries = new ArrayList<>();
     private final int density;
+    private int recentCount;
 
     AppListAdapter(Context context, IconCache icons) {
         this.context = context;
@@ -26,16 +27,19 @@ final class AppListAdapter extends BaseAdapter {
         density = context.getResources().getDisplayMetrics().densityDpi;
     }
 
-    void setEntries(List<AppEntry> next) {
+    /** Shows {@code recent} under a "Recent" header, then {@code next} grouped by letter. */
+    void setEntries(List<AppEntry> recent, List<AppEntry> next) {
         entries.clear();
+        entries.addAll(recent);
         entries.addAll(next);
+        recentCount = recent.size();
         notifyDataSetChanged();
     }
 
     AppEntry entryAt(int position) { return entries.get(position); }
+    /** Position where {@code letter}'s section starts, below the recent rows. */
     int indexFor(char letter) {
-        String target = String.valueOf(letter);
-        for (int i = 0; i < entries.size(); i++) if (entries.get(i).section.compareTo(target) >= 0) return i;
+        for (int i = recentCount; i < entries.size(); i++) if (entries.get(i).section.charAt(0) >= letter) return i;
         return Math.max(0, entries.size() - 1);
     }
     @Override public int getCount() { return entries.size(); }
@@ -62,9 +66,11 @@ final class AppListAdapter extends BaseAdapter {
                 }
             });
         } else row.icon.setImageBitmap(icon);
-        boolean header = position == 0 || !entry.section.equals(entries.get(position - 1).section);
+        boolean recent = position < recentCount;
+        boolean header = recent ? position == 0
+                : position == recentCount || !entry.section.equals(entries.get(position - 1).section);
         row.header.setVisibility(header ? View.VISIBLE : View.GONE);
-        if (header) row.header.setText(entry.section);
+        if (header) row.header.setText(recent ? "Recent" : entry.section);
         return row;
     }
 

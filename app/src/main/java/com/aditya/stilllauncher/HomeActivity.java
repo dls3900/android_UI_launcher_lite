@@ -20,9 +20,9 @@ import android.text.Editable;
 import android.text.TextWatcher;
 import android.text.format.DateFormat;
 import android.view.Gravity;
-import android.view.Choreographer;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewTreeObserver;
 import android.view.WindowManager;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.EditText;
@@ -47,9 +47,12 @@ public final class HomeActivity extends ComponentActivity {
     private static final String DIM = "dim";
     private static final String LEFT = "left";
     private static final String OFFSET = "offset";
+    private static final String RECENTS = "recents";
+    private static final int SHOWN_RECENTS = 3;
     private final IconCache iconCache = new IconCache();
     private final List<AppEntry> apps = new ArrayList<>();
     private final LinkedHashSet<String> favoriteKeys = new LinkedHashSet<>();
+    private final List<String> recentKeys = new ArrayList<>();
     private SharedPreferences prefs;
     private AppRepository repository;
     private FrameLayout root;
@@ -65,15 +68,8 @@ public final class HomeActivity extends ComponentActivity {
     private boolean showingApps;
     private int topInset;
     private int bottomInset;
-    private char pendingLetter;
-    private boolean jumpScheduled;
-    private final Choreographer.FrameCallback jumpFrame = frameTimeNanos -> {
-        jumpScheduled = false;
-        if (!showingApps) return;
-        // Stop any fling first, otherwise it keeps scrolling past the letter we jump to.
-        appList.smoothScrollBy(0, 0);
-        appList.setSelection(adapter.indexFor(pendingLetter));
-    };
+    /** Letter picked on the rail; the list shows only that section. 0 shows every app. */
+    private char letterFilter;
     private final BroadcastReceiver clockReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) { updateClock(); }
     };
@@ -89,6 +85,8 @@ public final class HomeActivity extends ComponentActivity {
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         String saved = prefs.getString(FAVORITES, "");
         if (!saved.isEmpty()) favoriteKeys.addAll(Arrays.asList(saved.split("\\|")));
+        String recent = prefs.getString(RECENTS, "");
+        if (!recent.isEmpty()) recentKeys.addAll(Arrays.asList(recent.split("\\|")));
         createUi();
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override public void handleOnBackPressed() {
@@ -163,6 +161,7 @@ public final class HomeActivity extends ComponentActivity {
         appList.setDivider(null);
         appList.setSelector(android.R.color.transparent);
         appList.setVerticalScrollBarEnabled(false);
+        appList.setClipToPadding(false);
         adapter = new AppListAdapter(this, iconCache);
         appList.setAdapter(adapter);
         FrameLayout.LayoutParams listLp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
@@ -174,18 +173,55 @@ public final class HomeActivity extends ComponentActivity {
         rail = new AlphabetRail(this);
         rail.setListener(letter -> {
             if (letter == '☆') { hideAllApps(); return; }
-            if (letter == '○') { showAllApps(true); return; }
+            if (letter == '○') {
+                letterFilter = 0;
+                showAllApps(true);
+                filterApps(search.getText().toString());
+                scrollListToTop();
+                return;
+            }
             if (!showingApps) showAllApps(false);
             else if (search.hasFocus()) {
                 search.clearFocus();
                 hideKeyboard();
             }
-            if (search.length() > 0) search.setText("");
-            pendingLetter = letter;
-            if (!jumpScheduled) {
-                jumpScheduled = true;
-                Choreographer.getInstance().postFrameCallback(jumpFrame);
+            letterFilter = letter;
+            refreshList();
+            scrollListToTop();
+        });
+        rail.setReleaseListener(() -> {
+            if (!showingApps || letterFilter == 0) return;
+            // Finger lifted: show the full list around the picked letter, keeping its apps
+            // exactly where they were on screen instead of jumping to the top.
+            char letter = letterFilter;
+            int y = (int) appList.getTranslationY();
+            letterFilter = 0;
+            filterApps("");
+            int index = adapter.indexFor(letter);
+            // Room below the last apps, so letters near Z can stay in place too.
+            int rest = 0;
+            for (int i = index; i < adapter.getCount() && rest < appList.getHeight(); i++) {
+                rest += dp(52);
+                if (i == index || !adapter.entryAt(i).section.equals(adapter.entryAt(i - 1).section)) rest += dp(28);
             }
+            appList.setPadding(0, 0, 0, Math.max(0, appList.getHeight() - y - rest));
+            appList.smoothScrollBy(0, 0);
+            appList.setSelectionFromTop(index, y);
+            // Some devices drop a jump made right after the list's data changes and lay it out
+            // from the top. Apply it again once that layout is done, before anything is drawn.
+            appList.getViewTreeObserver().addOnPreDrawListener(new ViewTreeObserver.OnPreDrawListener() {
+                @Override public boolean onPreDraw() {
+                    appList.getViewTreeObserver().removeOnPreDrawListener(this);
+                    if (letterFilter != 0 || index >= adapter.getCount()) return true;
+                    View first = appList.getChildAt(0);
+                    boolean placed = appList.getFirstVisiblePosition() <= index
+                            && index <= appList.getLastVisiblePosition()
+                            && appList.getChildAt(index - appList.getFirstVisiblePosition()).getTop() == y;
+                    if (placed || first == null) return true;
+                    appList.setSelectionFromTop(index, y);
+                    return false;
+                }
+            });
         });
         root.addView(rail, new FrameLayout.LayoutParams(rail.railWidth(), ViewGroup.LayoutParams.MATCH_PARENT));
         updateClock();
@@ -284,12 +320,60 @@ public final class HomeActivity extends ComponentActivity {
     private void filterApps(String query) {
         if (adapter == null) return;
         String needle = query.trim().toLowerCase(Locale.getDefault());
-        if (needle.isEmpty()) adapter.setEntries(apps);
-        else {
+        int top = 0;
+        if (!needle.isEmpty()) {
+            // Typing searches every app, whichever letter was picked before.
+            if (letterFilter != 0) {
+                letterFilter = 0;
+                rail.clearSelection();
+            }
             List<AppEntry> filtered = new ArrayList<>();
             for (AppEntry app : apps) if (app.label.toLowerCase(Locale.getDefault()).contains(needle)) filtered.add(app);
-            adapter.setEntries(filtered);
+            adapter.setEntries(java.util.Collections.emptyList(), filtered);
+        } else if (letterFilter == 0) {
+            adapter.setEntries(recentApps(), apps);
+        } else {
+            // While a finger is on the rail, only that letter's apps show, in the middle of the screen.
+            List<AppEntry> section = new ArrayList<>();
+            for (AppEntry app : apps) if (app.section.charAt(0) == letterFilter) section.add(app);
+            adapter.setEntries(java.util.Collections.emptyList(), section);
+            int listTop = topInset + dp(30) + dp(58);
+            int content = dp(32) + section.size() * dp(52);
+            top = Math.max(0, root.getHeight() / 2 - content / 2 - listTop);
         }
+        // Moved rather than padded, so the list's own scroll position math is unaffected.
+        appList.setTranslationY(top);
+    }
+
+    /** Clears the search box and rebuilds the list for the current letter. */
+    private void refreshList() {
+        if (search.length() > 0) search.setText("");
+        else filterApps("");
+    }
+
+    private void scrollListToTop() {
+        // Stop any fling first, otherwise it keeps scrolling the new list.
+        appList.smoothScrollBy(0, 0);
+        if (appList.getPaddingBottom() != 0) appList.setPadding(0, 0, 0, 0);
+        appList.setSelection(0);
+    }
+
+    private List<AppEntry> recentApps() {
+        List<AppEntry> recent = new ArrayList<>();
+        for (String key : recentKeys) {
+            AppEntry entry = findByKey(key);
+            if (entry != null) recent.add(entry);
+            if (recent.size() == SHOWN_RECENTS) break;
+        }
+        return recent;
+    }
+
+    private void rememberRecent(AppEntry entry) {
+        recentKeys.remove(entry.key);
+        recentKeys.add(0, entry.key);
+        // Keep a few spares so the row stays full after an app is uninstalled.
+        while (recentKeys.size() > 2 * SHOWN_RECENTS) recentKeys.remove(recentKeys.size() - 1);
+        prefs.edit().putString(RECENTS, String.join("|", recentKeys)).apply();
     }
 
     private void showAllApps(boolean focusSearch) {
@@ -308,14 +392,11 @@ public final class HomeActivity extends ComponentActivity {
 
     private void hideAllApps() {
         showingApps = false;
-        if (jumpScheduled) {
-            Choreographer.getInstance().removeFrameCallback(jumpFrame);
-            jumpScheduled = false;
-        }
+        letterFilter = 0;
         appPanel.setVisibility(View.GONE);
         homeContent.setVisibility(View.VISIBLE);
         root.setBackgroundColor(prefs.getBoolean(DIM, true) ? 0x44000000 : Color.TRANSPARENT);
-        search.setText("");
+        refreshList();
         rail.clearSelection();
         hideKeyboard();
     }
@@ -327,6 +408,7 @@ public final class HomeActivity extends ComponentActivity {
     private void launch(AppEntry entry) {
         try {
             repository.launch(entry);
+            rememberRecent(entry);
             hideAllApps();
         } catch (RuntimeException e) {
             Toast.makeText(this, "Could not open " + entry.label, Toast.LENGTH_SHORT).show();
@@ -465,7 +547,6 @@ public final class HomeActivity extends ComponentActivity {
     }
 
     @Override protected void onDestroy() {
-        if (jumpScheduled) Choreographer.getInstance().removeFrameCallback(jumpFrame);
         if (repository != null) repository.close();
         iconCache.close();
         super.onDestroy();
