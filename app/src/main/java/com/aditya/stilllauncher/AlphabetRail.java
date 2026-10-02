@@ -29,6 +29,7 @@ final class AlphabetRail extends View {
     private final float bubbleGap;
     private final float pad;
     private Listener listener;
+    private Runnable releaseListener;
     private boolean leftSide;
     private int selected = -1;
     private int touched = -1;
@@ -64,6 +65,8 @@ final class AlphabetRail extends View {
     }
 
     void setListener(Listener listener) { this.listener = listener; }
+    /** Called when the finger leaves the rail. */
+    void setReleaseListener(Runnable listener) { releaseListener = listener; }
     void clearSelection() { selected = -1; invalidate(); }
     void setSections(String sections) {
         String next = "☆" + sections + "○";
@@ -166,6 +169,7 @@ final class AlphabetRail extends View {
                 dragging = false;
                 setWaveTarget(0f);
                 performClick();
+                if (releaseListener != null) releaseListener.run();
                 return true;
             default: return dragging;
         }
